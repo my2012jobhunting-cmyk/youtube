@@ -2,16 +2,22 @@
 from __future__ import annotations
 
 import argparse
+import time
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import sys
 from typing import Iterable, List, Optional
 
-from .config import AppConfig, load_config_from_env
-from .document import build_markdown_document
-from .gemini_client import GeminiSummary, GeminiSummarizer
-from .notion_client import NotionResult, NotionUploader
-from .youtube_client import Video, YouTubeClient
+if __package__ in (None, ""):
+    sys.path.append(str(Path(__file__).resolve().parent.parent))
+
+from youtube_summary.config import AppConfig, load_config_from_env
+from youtube_summary.document import build_markdown_document
+from youtube_summary.gemini_client import GeminiSummary, GeminiSummarizer
+from youtube_summary.transcript_client import TranscriptFetcher
+from youtube_summary.notion_client import NotionResult, NotionUploader
+from youtube_summary.youtube_client import Video, YouTubeClient
 
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
@@ -67,6 +73,7 @@ def _summarise_videos(
     config: AppConfig,
     language: Optional[str],
     skip_gemini: bool,
+    transcript_fetcher: Optional[TranscriptFetcher],
 ) -> List[GeminiSummary]:
     summaries: List[GeminiSummary] = []
 
@@ -84,8 +91,23 @@ def _summarise_videos(
 
     summarizer = GeminiSummarizer(config.gemini)
     for video in videos:
+        transcript: Optional[str] = None
+        if transcript_fetcher:
+            try:
+                transcript = transcript_fetcher.fetch(
+                    video.video_id, video_url=video.url
+                )
+            except Exception as error:  # pylint: disable=broad-except
+                print(f"Failed to fetch transcript for {video.video_id}: {error}")
         try:
-            summaries.append(summarizer.summarize(video, language=language))
+            summaries.append(
+                summarizer.summarize(
+                    video,
+                    transcript=transcript,
+                    language=language,
+                )
+            )
+            time.sleep(3)
         except Exception as error:  # pylint: disable=broad-except
             summaries.append(
                 GeminiSummary(
@@ -93,6 +115,7 @@ def _summarise_videos(
                     summary=f"Failed to summarise via Gemini: {error}",
                 )
             )
+
     return summaries
 
 
@@ -136,11 +159,19 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     )
     print(f"Discovered {len(videos)} videos in the requested window.")
 
+    transcript_fetcher: Optional[TranscriptFetcher] = None
+    if not args.skip_gemini:
+        transcript_languages: Optional[List[str]] = None
+        if args.language:
+            transcript_languages = [args.language]
+        transcript_fetcher = TranscriptFetcher(preferred_languages=transcript_languages)
+
     summaries = _summarise_videos(
         videos,
         config=config,
         language=args.language,
         skip_gemini=args.skip_gemini,
+        transcript_fetcher=transcript_fetcher,
     )
 
     document = build_markdown_document(

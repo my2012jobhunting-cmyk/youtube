@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Iterable, List, Optional
 
-from .gemini_client import GeminiSummary
+from youtube_summary.gemini_client import GeminiSummary
 
 
 @dataclass

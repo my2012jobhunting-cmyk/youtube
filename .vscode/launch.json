@@ -1,0 +1,16 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python 调试程序: 包含参数的当前文件",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/youtube_summary/main.py",
+            "console": "integratedTerminal",
+            "args": "--start 2025-09-23T09:00:00+08:00   --end 2025-09-24T23:59:59+08:00   --language zh-CN   --title '本周订阅视频总结'"
+        }
+    ]
+}
