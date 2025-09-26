@@ -2,12 +2,26 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
+import time
 from typing import Optional
 
 import google.generativeai as genai
 
 from youtube_summary.config import GeminiConfig
 from youtube_summary.youtube_client import Video
+
+
+LOG_PREFIX = "[gemini_summary_log]"
+logger = logging.getLogger(__name__)
+
+
+def _log_error(message: str, *args) -> None:
+    logger.error("%s " + message, LOG_PREFIX, *args)
+
+
+def _log_info(message: str, *args) -> None:
+    logger.info("%s " + message, LOG_PREFIX, *args)
 
 
 @dataclass
@@ -36,7 +50,7 @@ class GeminiSummarizer:
         """Summarise a single video using Gemini."""
 
         instructions = (
-            "用通俗易懂的语言，按视频内容顺序列出所有观点并使用无序列表。"
+            "用通俗易懂的语言，按视频内容顺序列出里面的所有观点。"
             "每条观点结尾必须附上可直接跳转的时间戳链接（格式 [83s](https://www.youtube.com/watch?v=...&t=83s)），只保留最开始的一个时间戳。"
             "可直接复用字幕行里已有的 Markdown 链接。全程使用中文回答。"
         )
@@ -57,7 +71,41 @@ class GeminiSummarizer:
                 f"视频内容:\n{excerpt}"
             )
 
-        response = self._model.generate_content(prompt)
+        request_kwargs = {}
+        if self._config.request_timeout:
+            request_kwargs["request_options"] = {
+                "timeout": self._config.request_timeout
+            }
+
+        deadline_tokens = ("504", "Deadline Exceeded")
+        attempts = 5
+        for attempt in range(attempts):
+            try:
+                response = self._model.generate_content(prompt, **request_kwargs)
+                if attempt > 0:
+                    _log_info(
+                        "Gemini request succeeded for %s after %d retries.",
+                        video.video_id,
+                        attempt,
+                    )
+                break
+            except Exception as error:  # pylint: disable=broad-except
+                should_retry = any(token in str(error) for token in deadline_tokens)
+                if attempt < attempts - 1 and should_retry:
+                    _log_error(
+                        "Gemini request hit %s on attempt %d for %s; retrying.",
+                        error,
+                        attempt + 1,
+                        video.video_id,
+                    )
+                    time.sleep(3)
+                    continue
+                _log_error(
+                    "Gemini request failed for %s: %s",
+                    video.video_id,
+                    error,
+                )
+                raise
         text = response.text if hasattr(response, "text") else str(response)
         summary = text.strip().replace("\n\n", "\n")
         if not transcript:

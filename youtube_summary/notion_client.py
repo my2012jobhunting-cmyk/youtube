@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import re
 from typing import Iterable, List, Optional
 
@@ -10,6 +11,9 @@ from urllib.parse import parse_qs, urlparse
 
 from youtube_summary.config import NotionConfig
 from youtube_summary.gemini_client import GeminiSummary
+
+LOG_PREFIX = "[gemini_summary_log]"
+logger = logging.getLogger(__name__)
 
 NOTION_API_VERSION = "2022-06-28"
 
@@ -47,6 +51,10 @@ class NotionUploader:
         """Create a page in Notion with the provided summaries."""
 
         blocks = _build_blocks(entries)
+        max_children = 100
+        first_batch = blocks[:max_children]
+        remaining = blocks[max_children:]
+
         payload = {
             "properties": {
                 "title": {
@@ -58,7 +66,7 @@ class NotionUploader:
                     ]
                 }
             },
-            "children": blocks,
+            "children": first_batch,
         }
 
         if self._config.database_id:
@@ -66,15 +74,52 @@ class NotionUploader:
         else:
             payload["parent"] = {"page_id": self._config.parent_page_id}
 
-        response = self._session.post("https://api.notion.com/v1/pages", json=payload, timeout=60)
-        if response.ok:
-            data = response.json()
-            return NotionResult(success=True, page_id=data.get("id"), url=data.get("url"))
+        response = self._session.post(
+            "https://api.notion.com/v1/pages", json=payload, timeout=60
+        )
+        if not response.ok:
+            logger.error("%s Notion page creation failed: %s", LOG_PREFIX, response.text)
+            return NotionResult(success=False, error=response.text)
 
-        return NotionResult(success=False, error=response.text)
+        data = response.json()
+        page_id = data.get("id")
+        page_url = data.get("url")
+
+        if remaining:
+            logger.info(
+                "%s Appending %d additional Notion blocks in batches.",
+                LOG_PREFIX,
+                len(remaining),
+            )
+            append_endpoint = f"https://api.notion.com/v1/blocks/{page_id}/children"
+            for index in range(0, len(remaining), max_children):
+                chunk = remaining[index : index + max_children]
+                append_response = self._session.post(
+                    append_endpoint,
+                    json={"children": chunk},
+                    timeout=60,
+                )
+                if not append_response.ok:
+                    logger.error(
+                        "%s Failed to append blocks to Notion page %s: %s",
+                        LOG_PREFIX,
+                        page_id,
+                        append_response.text,
+                    )
+                    return NotionResult(
+                        success=False,
+                        page_id=page_id,
+                        url=page_url,
+                        error=append_response.text,
+                    )
+
+        logger.info(
+            "%s Notion page ready with %d blocks.", LOG_PREFIX, len(blocks)
+        )
+        return NotionResult(success=True, page_id=page_id, url=page_url)
 
 
-def _chunk_text(text: str, *, limit: int = 1900) -> List[str]:
+def _chunk_text(text: str, *, limit: int = 1990) -> List[str]:
     """Split text into chunks that stay within Notion's 2000 char limit."""
 
     if not text:
@@ -140,21 +185,29 @@ def _label_for_timestamp_url(url: str) -> Optional[str]:
 def _build_blocks(entries: Iterable[GeminiSummary]) -> List[dict]:
     blocks: List[dict] = []
     for entry in entries:
+        heading_rich_text = [
+            {
+                "type": "text",
+                "text": {
+                    "content": entry.video.title,
+                    "link": {"url": entry.video.url} if entry.video.url else None,
+                },
+            }
+        ]
+
+        channel_title = entry.video.channel_title if entry.video.channel_title is not None else ""
+        heading_rich_text.append(
+            {
+                "type": "text",
+                "text": {"content": f"\n订阅号：{channel_title}"},
+            }
+        )
+
         blocks.append(
             {
                 "object": "block",
                 "type": "heading_2",
-                "heading_2": {
-                    "rich_text": [
-                        {
-                            "type": "text",
-                            "text": {
-                                "content": entry.video.title,
-                                "link": {"url": entry.video.url} if entry.video.url else None,
-                            },
-                        }
-                    ],
-                },
+                "heading_2": {"rich_text": heading_rich_text},
             }
         )
         blocks.extend(_build_summary_blocks(entry.summary))
@@ -272,38 +325,57 @@ def _build_summary_blocks(summary: Optional[str]) -> List[dict]:
             }
         ]
 
-    blocks: List[dict] = []
     bullet_markers = ("- ", "* ", "• ")
+    processed_lines: List[str] = []
     for raw_line in summary.splitlines():
         stripped = raw_line.strip()
         if not stripped:
             continue
 
-        block_type = "paragraph"
-        content = _normalise_markdown_links(stripped)
+        is_bullet = False
+        content = stripped
         for marker in bullet_markers:
             if stripped.startswith(marker):
-                block_type = "bulleted_list_item"
-                content = _normalise_markdown_links(stripped[len(marker) :].strip())
+                is_bullet = True
+                content = stripped[len(marker) :].strip()
                 break
 
-        rich_text = _text_to_rich_text(content)
-        if not rich_text:
+        normalised = _normalise_markdown_links(content)
+        if not normalised:
             continue
 
-        blocks.append(
-            {
-                "object": "block",
-                "type": block_type,
-                block_type: {"rich_text": rich_text},
-            }
-        )
+        processed_lines.append(f"• {normalised}" if is_bullet else normalised)
 
-    if not blocks:
+    if not processed_lines:
         fallback_text = summary.strip() or "(No summary available)"
         rich_text = _text_to_rich_text(fallback_text)
         if not rich_text:
             rich_text = [{"type": "text", "text": {"content": "(No summary available)"}}]
+        return [
+            {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {"rich_text": rich_text},
+            }
+        ]
+
+    blocks: List[dict] = []
+    chunk_size = 10
+    for index in range(0, len(processed_lines), chunk_size):
+        chunk_text = "\n".join(processed_lines[index : index + chunk_size])
+        rich_text = _text_to_rich_text(chunk_text)
+        if not rich_text:
+            continue
+        blocks.append(
+            {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {"rich_text": rich_text},
+            }
+        )
+
+    if not blocks:
+        rich_text = [{"type": "text", "text": {"content": "(No summary available)"}}]
         blocks.append(
             {
                 "object": "block",

@@ -34,7 +34,7 @@ def build_markdown_document(
 
     for entry in summaries:
         lines.append(f"## {entry.video.title}")
-        lines.append(f"*Channel:* {entry.video.channel_title}")
+        lines.append(f"订阅号：{entry.video.channel_title}")
         lines.append(f"*Published:* {entry.video.published_at.isoformat()}")
         lines.append(f"*Link:* {entry.video.url}")
         lines.append("")

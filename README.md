@@ -11,6 +11,7 @@
 - 调用 Gemini 模型为每个视频生成 3-5 条要点总结。
 - 输出包含视频链接、发布时间、总结的 Markdown 文档。
 - 可选地，把结果上传到 Notion 数据库或页面中。
+- 可选：通过 Webshare 代理稳定获取视频字幕。
 
 ## 快速开始
 
@@ -46,7 +47,29 @@
    - 将密钥保存到环境变量 `NOTION_API_KEY`。
    - 如果希望把内容写入数据库，设置 `NOTION_DATABASE_ID`；若直接写到已有页面，则设置 `NOTION_PARENT_PAGE_ID`。两者至少提供一个。
 
-5. **运行示例**
+5. **配置 Webshare 代理（可选）**
+
+   - 在 [Webshare](https://proxy.webshare.io/) 创建账号并购买或申请代理套餐。
+   - 设置以下环境变量以启用代理：
+
+     | 变量 | 说明 |
+     | ---- | ---- |
+     | `WEBSHARE_USERNAME` | Webshare 用户名，必填。 |
+     | `WEBSHARE_PASSWORD` | Webshare 密码或代理密钥，必填。 |
+     | `WEBSHARE_DOMAIN` | 代理域名，默认 `proxy.webshare.io`。 |
+     | `WEBSHARE_PORT` | 代理端口，默认 `80`。 |
+     | `WEBSHARE_LOCATIONS` | 限定代理地区，逗号分隔，可选。 |
+     | `WEBSHARE_RETRIES` | 遇到封锁时的重试次数，默认 `10`。 |
+
+   示例（使用 shell 环境变量）：
+
+   ```bash
+   export WEBSHARE_USERNAME=your_user
+   export WEBSHARE_PASSWORD=your_password
+   export WEBSHARE_LOCATIONS=US,CA
+   ```
+
+6. **运行示例**
 
    ```bash
    python -m youtube_summary.main \

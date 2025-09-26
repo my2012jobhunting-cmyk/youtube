@@ -3,7 +3,6 @@
 from .config import AppConfig, GeminiConfig, NotionConfig, YouTubeConfig, load_config_from_env
 from .document import Document, build_markdown_document
 from .gemini_client import GeminiSummarizer
-from .main import main
 from .notion_client import NotionUploader
 from .youtube_client import Video, YouTubeClient
 
@@ -19,5 +18,5 @@ __all__ = [
     "YouTubeConfig",
     "build_markdown_document",
     "load_config_from_env",
-    "main",
+    "youtube",
 ]

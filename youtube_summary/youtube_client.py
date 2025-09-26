@@ -209,7 +209,7 @@ class YouTubeClient:
                 )
             )
 
-        videos.sort(key=lambda v: v.published_at)
+        videos.sort(key=lambda v: v.published_at, reverse=True)
         return videos
 
     def _map_upload_playlists(self, channel_ids: Sequence[str]) -> Dict[str, str]:
@@ -296,7 +296,7 @@ def _parse_duration_seconds(value: Optional[str]) -> Optional[int]:
 def _is_probable_short(snippet: Dict[str, object], duration_seconds: Optional[int]) -> bool:
     """Best-effort heuristic to filter out YouTube Shorts style videos."""
 
-    if duration_seconds is not None and duration_seconds <= 180:
+    if duration_seconds is not None and duration_seconds <= 480:
         return True
     text_fragments = [
         str(snippet.get("title", "")),

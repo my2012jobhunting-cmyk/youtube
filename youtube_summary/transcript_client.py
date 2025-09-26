@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 from typing import List, Optional
 
 from youtube_transcript_api import (
@@ -10,6 +11,7 @@ from youtube_transcript_api import (
     YouTubeTranscriptApi,
     YouTubeTranscriptApiException,
 )
+from youtube_transcript_api.proxies import ProxyConfig
 
 _DEFAULT_LANGUAGES = [
     "zh-Hans",
@@ -40,10 +42,21 @@ class TranscriptFetcher:
     """Fetch transcripts for YouTube videos."""
 
     preferred_languages: Optional[List[str]] = None
+    proxy_config: Optional[ProxyConfig] = None
     _client: YouTubeTranscriptApi = field(init=False, repr=False)
+    _logger = logging.getLogger(__name__)
+    _log_prefix = "[gemini_summary_log]"
+
+    @classmethod
+    def _log_error(cls, message: str, *args) -> None:
+        cls._logger.error("%s " + message, cls._log_prefix, *args)
+
+    @classmethod
+    def _log_debug(cls, message: str, *args) -> None:
+        cls._logger.debug("%s " + message, cls._log_prefix, *args)
 
     def __post_init__(self) -> None:
-        self._client = YouTubeTranscriptApi()
+        self._client = YouTubeTranscriptApi(proxy_config=self.proxy_config)
 
     def fetch(self, video_id: str, *, video_url: Optional[str] = None) -> Optional[str]:
         """Return the transcript text for the given video ID if available."""
@@ -58,7 +71,7 @@ class TranscriptFetcher:
         try:
             transcript = self._client.fetch(video_id, languages=candidate_languages)
         except Exception as error:  # pylint: disable=broad-except
-            print(f"Failed to fetch transcript for {video_id}: {error}")
+            self._log_error("Transcript fetch failed for %s: %s", video_id, error)
             return None
         lines: List[str] = []
         for snippet in transcript.to_raw_data():
@@ -80,6 +93,10 @@ class TranscriptFetcher:
                 lines.append(text)
 
         cleaned = "\n".join(lines).strip()
+        if cleaned:
+            self._log_debug(
+                "Returning transcript for %s with %d lines.", video_id, len(lines)
+            )
         return cleaned or None
 
 
